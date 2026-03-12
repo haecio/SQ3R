@@ -1,11 +1,12 @@
 import re
+import json
 from openai import OpenAI
 
 client = OpenAI()
 
-# --- hard client-side emoji remover (defence-in-depth) ---
+# --- removedor de emojis (manter por segurança de interface) ---
 _EMOJI_RE = re.compile(
-    "["                         # broad-ish emoji ranges (not perfect, but effective)
+    "["
     "\U0001F300-\U0001F5FF"
     "\U0001F600-\U0001F64F"
     "\U0001F680-\U0001F6FF"
@@ -23,14 +24,21 @@ _EMOJI_RE = re.compile(
 def strip_emojis(text: str) -> str:
     return _EMOJI_RE.sub("", text).strip()
 
-SYSTEM = """Você é um operador silencioso de leitura para medicina.
-Regras invioláveis:
-- Nunca anuncie nem descreva o que está fazendo (sem “etapa”, sem “agora vou”, sem meta-comentários).
-- Nunca use emojis ou símbolos decorativos.
-- Você executa APENAS a etapa atual e então PARA.
-- Se a etapa exigir input do usuário, você deve terminar perguntando somente o que é necessário.
-- Se faltar texto/material para responder, diga apenas "preciso do trecho X" e pare.
-Saída obrigatória: JSON estritamente conforme o schema fornecido (sem texto fora do JSON).
+# MODIFICAÇÃO: Persona mais humana e prestativa
+SYSTEM = """Você é um Tutor Especialista em Medicina, focado em alta retenção e compreensão de mecanismos.
+Sua missão é guiar o estudante através do material médico de forma clara, didática e profissional.
+
+Regras de Conduta:
+- Use uma linguagem humana, encorajadora e técnica (quando apropriado).
+- Responda sempre em Português (Brasil).
+- Nunca use emojis ou decorações visuais.
+- Foque exclusivamente na etapa atual do protocolo de estudo.
+- Não mencione que você é um robô ou que está gerando JSON; apenas fale como um tutor.
+
+Regra Técnica Inviolável:
+- Toda a sua resposta deve ser um objeto JSON único e válido.
+- O campo "text" deve conter sua explicação ou comentário humano.
+- O campo "user_prompt" deve conter a instrução clara do que o usuário precisa fazer a seguir.
 """
 
 SCHEMA = {
@@ -62,8 +70,9 @@ SCHEMA = {
 }
 
 def step(material: str, goal: str, state: dict, user_input: str | None = None):
-    # Decide stage based on state + whether user has responded.
     stage = state.get("stage", "survey")
+    
+    # Lógica de progressão de etapas
     if stage == "survey" and state.get("outline"):
         stage = "questions"
     if stage == "questions" and state.get("questions"):
@@ -71,9 +80,7 @@ def step(material: str, goal: str, state: dict, user_input: str | None = None):
     if stage == "reading_mode" and state.get("reading_done"):
         stage = "consolidation"
 
-    user_block = ""
-    if user_input:
-        user_block = f"\nINPUT_DO_USUÁRIO:\n{user_input}\n"
+    user_block = f"\nINPUT_DO_USUÁRIO:\n{user_input}\n" if user_input else ""
 
     prompt = f"""MATERIAL:
 {material}
@@ -84,56 +91,63 @@ OBJETIVO:
 ESTADO_ATUAL:
 {state}
 
-ETAPA_ATUAL (execute somente esta e pare):
+ETAPA_ATUAL:
 {stage}
 
 INSTRUÇÃO:
-- Produza apenas o conteúdo necessário da etapa atual.
-- Se terminar a etapa, PARE e solicite o próximo input mínimo (se necessário).
+- Desenvolva o conteúdo da etapa '{stage}' de forma humana e direta no campo 'text'.
+- Se precisar de algo do usuário, defina 'needs_user_input' como true e escreva o pedido em 'user_prompt'.
 {user_block}
 """
 
-    resp = client.responses.create(
-        input=[
+    resp = client.chat.completions.create(
+        model="gpt-4o", # Ou o modelo de sua preferência
+        messages=[
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": prompt},
         ],
         response_format=SCHEMA,
-        max_output_tokens=800,
     )
 
-    # The SDK returns structured output in resp.output_text for plain text,
-    # but here we asked for JSON; easiest is to parse from the first output item.
-    # Depending on SDK version, you may need: resp.output[0].content[0].text
-    raw_json = resp.output[0].content[0].text
-    # Parse JSON safely
-    import json
+    raw_json = resp.choices[0].message.content
     data = json.loads(raw_json)
 
+    # Limpeza de segurança
     data["text"] = strip_emojis(data["text"])
     data["user_prompt"] = strip_emojis(data["user_prompt"])
     return data
 
-# --------- Example usage ----------
+# --------- Execução com Visualização Humanizada ----------
 if __name__ == "__main__":
-    material = "COLE AQUI sua transcrição/slide/texto..."
-    goal = "prova; mecanismos; alto rendimento"
-    state = {"stage": "survey"}  # start
+    material = "Transcrição da aula sobre Insuficiência Cardíaca..."
+    goal = "Mecanismos fisiopatológicos e critérios diagnósticos."
+    state = {"stage": "survey"}
 
     while True:
+        # Chama o bot
         out = step(material, goal, state)
-        print(out["text"])
+        
+        # MOSTRAR APENAS O TEXTO (Isso resolve o problema da visualização do JSON)
+        print(f"\n[TUTOR]: {out['text']}")
+        
+        # Atualiza o estado interno
         state.update(out["state"])
         state["stage"] = out["stage"]
 
-        if out["needs_user_input"]:
-            user = input(out["user_prompt"] + "\n> ")
-            out2 = step(material, goal, state, user_input=user)
-            print(out2["text"])
-            state.update(out2["state"])
-            state["stage"] = out2["stage"]
-            if out2["stage"] == "done":
-                break
-
         if out["stage"] == "done":
+            print("\nSessão de estudo finalizada com sucesso.")
             break
+
+        if out["needs_user_input"]:
+            # Mostra a pergunta humana, não o código
+            user = input(f"\n[AÇÃO]: {out['user_prompt']}\n> ")
+            
+            # Processa o input do usuário
+            out = step(material, goal, state, user_input=user)
+            print(f"\n[TUTOR]: {out['text']}")
+            
+            state.update(out["state"])
+            state["stage"] = out["stage"]
+            
+            if out["stage"] == "done":
+                break
