@@ -1,0 +1,139 @@
+import re
+from openai import OpenAI
+
+client = OpenAI()
+
+# --- hard client-side emoji remover (defence-in-depth) ---
+_EMOJI_RE = re.compile(
+    "["                         # broad-ish emoji ranges (not perfect, but effective)
+    "\U0001F300-\U0001F5FF"
+    "\U0001F600-\U0001F64F"
+    "\U0001F680-\U0001F6FF"
+    "\U0001F700-\U0001F77F"
+    "\U0001F780-\U0001F7FF"
+    "\U0001F800-\U0001F8FF"
+    "\U0001F900-\U0001F9FF"
+    "\U0001FA00-\U0001FAFF"
+    "\U00002700-\U000027BF"
+    "\U00002600-\U000026FF"
+    "]+",
+    flags=re.UNICODE,
+)
+
+def strip_emojis(text: str) -> str:
+    return _EMOJI_RE.sub("", text).strip()
+
+SYSTEM = """Você é um operador silencioso de leitura para medicina.
+Regras invioláveis:
+- Nunca anuncie nem descreva o que está fazendo (sem “etapa”, sem “agora vou”, sem meta-comentários).
+- Nunca use emojis ou símbolos decorativos.
+- Você executa APENAS a etapa atual e então PARA.
+- Se a etapa exigir input do usuário, você deve terminar perguntando somente o que é necessário.
+- Se faltar texto/material para responder, diga apenas "preciso do trecho X" e pare.
+Saída obrigatória: JSON estritamente conforme o schema fornecido (sem texto fora do JSON).
+"""
+
+SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "med_reading_step",
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "stage": {"type": "string", "enum": ["survey", "questions", "reading_mode", "consolidation", "recall_pack", "spacing_plan", "done"]},
+                "text": {"type": "string"},
+                "needs_user_input": {"type": "boolean"},
+                "user_prompt": {"type": "string"},
+                "state": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "properties": {
+                        "outline": {"type": "string"},
+                        "questions": {"type": "string"},
+                        "current_topic": {"type": "string"},
+                    },
+                },
+            },
+            "required": ["stage", "text", "needs_user_input", "user_prompt", "state"],
+        },
+        "strict": True,
+    },
+}
+
+def step(material: str, goal: str, state: dict, user_input: str | None = None):
+    # Decide stage based on state + whether user has responded.
+    stage = state.get("stage", "survey")
+    if stage == "survey" and state.get("outline"):
+        stage = "questions"
+    if stage == "questions" and state.get("questions"):
+        stage = "reading_mode"
+    if stage == "reading_mode" and state.get("reading_done"):
+        stage = "consolidation"
+
+    user_block = ""
+    if user_input:
+        user_block = f"\nINPUT_DO_USUÁRIO:\n{user_input}\n"
+
+    prompt = f"""MATERIAL:
+{material}
+
+OBJETIVO:
+{goal}
+
+ESTADO_ATUAL:
+{state}
+
+ETAPA_ATUAL (execute somente esta e pare):
+{stage}
+
+INSTRUÇÃO:
+- Produza apenas o conteúdo necessário da etapa atual.
+- Se terminar a etapa, PARE e solicite o próximo input mínimo (se necessário).
+{user_block}
+"""
+
+    resp = client.responses.create(
+        input=[
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        response_format=SCHEMA,
+        max_output_tokens=800,
+    )
+
+    # The SDK returns structured output in resp.output_text for plain text,
+    # but here we asked for JSON; easiest is to parse from the first output item.
+    # Depending on SDK version, you may need: resp.output[0].content[0].text
+    raw_json = resp.output[0].content[0].text
+    # Parse JSON safely
+    import json
+    data = json.loads(raw_json)
+
+    data["text"] = strip_emojis(data["text"])
+    data["user_prompt"] = strip_emojis(data["user_prompt"])
+    return data
+
+# --------- Example usage ----------
+if __name__ == "__main__":
+    material = "COLE AQUI sua transcrição/slide/texto..."
+    goal = "prova; mecanismos; alto rendimento"
+    state = {"stage": "survey"}  # start
+
+    while True:
+        out = step(material, goal, state)
+        print(out["text"])
+        state.update(out["state"])
+        state["stage"] = out["stage"]
+
+        if out["needs_user_input"]:
+            user = input(out["user_prompt"] + "\n> ")
+            out2 = step(material, goal, state, user_input=user)
+            print(out2["text"])
+            state.update(out2["state"])
+            state["stage"] = out2["stage"]
+            if out2["stage"] == "done":
+                break
+
+        if out["stage"] == "done":
+            break
