@@ -1,0 +1,375 @@
+import time
+from datetime import datetime, timedelta
+
+class StudyWorkflow:
+    def __init__(self):
+        self.topic = ""
+        self.goal = ""
+        self.constraints = ""
+        self.study_map = []
+        self.questions = {}
+        self.notes = {
+            "minimum": [],
+            "if_then": [],
+            "confusions": []
+        }
+
+    def print_box(self, title, content):
+        """Helper to format output like the flowchart boxes."""
+        print(f"\n{'='*60}")
+        print(f"| {title.upper()}")
+        print(f"{'-'*60}")
+        if isinstance(content, list):
+            for line in content:
+                print(f"| - {line}")
+        else:
+            print(f"| {content}")
+        print(f"{'='*60}\n")
+        time.sleep(0.5) # Simulate processing time
+
+    # ┌──────────────────────────────────────────────────────────────┐
+    # │ 0) INPUT CHECK                                               │
+    # └──────────────────────────────────────────────────────────────┘
+    def step_0_input_check(self):
+        print(">>> STEP 0: INPUT CHECK")
+        self.topic = input("Enter Topic/Material: ").strip()
+        
+        user_goal = input("Enter Goal (Exam? Seminar? Clinic?): ").strip()
+        user_constraint = input("Enter Constraints (Time/Depth): ").strip()
+
+        # Logic: If missing, assume defaults
+        if not user_goal:
+            self.goal = "Exam prep, high-yield + mechanisms"
+            print("(!) Goal missing. Defaulting to: Exam prep, high-yield + mechanisms")
+        else:
+            self.goal = user_goal
+
+        self.constraints = user_constraint if user_constraint else "Standard Review"
+        
+        self.print_box("Session Configured", [
+            f"Topic: {self.topic}",
+            f"Goal: {self.goal}",
+            f"Constraint: {self.constraints}"
+        ])
+
+    # ┌──────────────────────────────────────────────────────────────┐
+    # │ 1) SURVEY (NO TEACHING YET)                                  │
+    # └──────────────────────────────────────────────────────────────┘
+    def step_1_survey(self):
+        print(">>> STEP 1: SURVEY MODE")
+        print("Scanning material for headings, definitions, and lists...")
+        time.sleep(1)
+        
+        # In a real app, this would parse a PDF. Here, we ask the user for the map.
+        print("Input the top 3-6 headings/subheadings found in your text (comma separated):")
+        raw_map = input("> ")
+        self.study_map = [item.strip() for item in raw_map.split(',')]
+        
+        self.print_box("Material Map Built", self.study_map)
+        print("(!) Flagging ambiguities... (Simulation: No unknown terms found)")
+
+    # ┌──────────────────────────────────────────────────────────────┐
+    # │ 2) QUESTION GENERATION (THE CORE OUTPUT)                     │
+    # └──────────────────────────────────────────────────────────────┘
+    import time
+from dataclasses import dataclass
+from typing import Dict, List, Tuple
+
+@dataclass
+class LensPick:
+    lens: str
+    reason: str
+
+class StudyOperator:
+    def __init__(self, study_map: List[str]):
+        self.study_map = study_map
+        self.questions: Dict[str, Dict] = {}
+
+    # ---------- small helpers ----------
+    def print_box(self, title: str, body: str):
+        print("\n" + "═" * 64)
+        print(f"{title}".center(64))
+        print("─" * 64)
+        print(body)
+        print("═" * 64 + "\n")
+
+    # ---------- NEW: topic diagnosis + lens selection ----------
+    def diagnose_topic(self, section: str) -> str:
+        """
+        Quick-and-dirty diagnosis from the section title.
+        Replace later with using actual notes/text per section.
+        """
+        s = section.lower()
+
+        if any(k in s for k in ["modelo", "curva", "compartimento", "distribuição", "absorção", "eliminação", "meia-vida", "cinética", "farmacocin", "dose", "concentração"]):
+            return "quant/process"
+        if any(k in s for k in ["diagnóstico", "síndrome", "vignette", "caso", "quadro", "clínic", "tratamento", "conduta", "prognóstico"]):
+            return "clinical/decision"
+        if any(k in s for k in ["tipos", "classificação", "formas", "subtipos", "fases", "estágios"]):
+            return "taxonomy"
+        if any(k in s for k in ["definição", "conceito", "o que é", "termo", "princípio"]):
+            return "definition"
+        return "mixed/unknown"
+
+    def pick_lenses(self, diagnosis: str) -> List[LensPick]:
+        """
+        Select 2–3 lenses that fit. Skip others explicitly.
+        """
+        if diagnosis == "taxonomy":
+            return [
+                LensPick("boundary", "Taxonomies are learned by boundaries: what counts as each type and what does not."),
+                LensPick("discrimination", "Common confusions live among nearest neighbours in a classification."),
+                LensPick("exceptions", "Exam questions often probe atypical examples or edge cases.")
+            ]
+        if diagnosis == "quant/process":
+            return [
+                LensPick("boundary", "Define the object and what signals it (variables, compartments, axes)."),
+                LensPick("representation_shift", "Graphs/timelines/diagrams create durable understanding for quantitative processes."),
+                LensPick("constraints", "Most mistakes come from assuming rules hold outside their conditions.")
+            ]
+        if diagnosis == "clinical/decision":
+            return [
+                LensPick("decision_action", "Clinical learning is about what you do/predict with information."),
+                LensPick("discrimination", "Differentials are won by one or two discriminators."),
+                LensPick("exceptions", "Red flags and special populations drive high-yield exceptions.")
+            ]
+        if diagnosis == "definition":
+            return [
+                LensPick("boundary", "Definitions become useful when you can draw the line against near concepts."),
+                LensPick("examples_counterexamples", "Concrete examples prevent empty verbal memorisation."),
+                LensPick("discrimination", "Definitions are tested by subtle contrasts.")
+            ]
+        # mixed/unknown
+        return [
+            LensPick("boundary", "Default: define and delimit."),
+            LensPick("discrimination", "Default: find the nearest neighbour confusion."),
+        ]
+
+    # ---------- NEW: lens-driven question generators ----------
+    def q_boundary(self, section: str) -> List[str]:
+        return [
+            f"Give a tight definition of **{section}** that draws a boundary (what counts / what doesn't).",
+            f"What is the fastest discriminator that tells you you're dealing with **{section}** rather than a nearby concept?"
+        ]
+
+    def q_mechanism(self, section: str) -> List[str]:
+        return [
+            f"Explain **{section}** as a causal chain with 3–5 steps; what changes at each step?",
+        ]
+
+    def q_decision_action(self, section: str) -> List[str]:
+        return [
+            f"In a practical scenario involving **{section}**, what is the next best action/prediction, and why?",
+            f"What single piece of information would most change your decision about **{section}**?"
+        ]
+
+    def q_discrimination(self, section: str) -> List[str]:
+        return [
+            f"What is the most common nearest-neighbour confusion with **{section}**? State the one feature that separates them.",
+        ]
+
+    def q_trap(self, section: str) -> List[str]:
+        return [
+            f"Write a plausible wrong statement about **{section}** that a good student might believe; then correct it.",
+        ]
+
+    def q_representation_shift(self, section: str) -> List[str]:
+        return [
+            f"Convert **{section}** into a diagram/timeline/graph description (no prose). What are the axes/parts?",
+        ]
+
+    def q_constraints(self, section: str) -> List[str]:
+        return [
+            f"Under what conditions does the usual rule for **{section}** stop being reliable?",
+        ]
+
+    def q_exceptions(self, section: str) -> List[str]:
+        return [
+            f"What is a high-yield exception/special case for **{section}** that flips the usual expectation?",
+        ]
+
+    def q_examples_counterexamples(self, section: str) -> List[str]:
+        return [
+            f"Give 1 concrete example and 1 counterexample that looks similar but is not **{section}**.",
+        ]
+
+    def generate_from_lens(self, lens: str, section: str) -> List[str]:
+        """
+        Dispatch lens -> question generator.
+        """
+        dispatch = {
+            "boundary": self.q_boundary,
+            "mechanism": self.q_mechanism,
+            "decision_action": self.q_decision_action,
+            "discrimination": self.q_discrimination,
+            "trap": self.q_trap,
+            "representation_shift": self.q_representation_shift,
+            "constraints": self.q_constraints,
+            "exceptions": self.q_exceptions,
+            "examples_counterexamples": self.q_examples_counterexamples,
+        }
+        fn = dispatch.get(lens)
+        if not fn:
+            return []
+        return fn(section)
+
+    # ---------- MODIFIED STEP 2 ----------
+    def step_2_generate_questions(self):
+        print(">>> STEP 2: QUESTION GENERATION (LENS-SELECTOR MODE)")
+
+        for section in self.study_map:
+            diagnosis = self.diagnose_topic(section)
+            picks = self.pick_lenses(diagnosis)
+
+            print(f"\nSection: {section}")
+            print(f"Diagnosis: {diagnosis}")
+            for p in picks:
+                print(f"  - Lens: {p.lens} | reason: {p.reason}")
+
+            out = {
+                "diagnosis": diagnosis,
+                "lenses": [{"lens": p.lens, "reason": p.reason} for p in picks],
+                "questions": []
+            }
+
+            # 1–2 questions per lens; you can tune this
+            for p in picks:
+                qs = self.generate_from_lens(p.lens, section)
+                # Keep it small and non-padding
+                out["questions"].extend(qs[:2])
+
+            # Optional: self-eval to force a tiny bit of reasoning
+            if out["questions"]:
+                out["self_eval"] = f"Highest-yield: {out['questions'][0]}"
+
+            self.questions[section] = out
+            time.sleep(0.1)
+
+        self.print_box("Core Output Ready", "Lens-selected questions generated for all sections.")
+
+# ------------------- quick test -------------------
+if __name__ == "__main__":
+    test_study_map = [
+        "Modelo de dois compartimentos",
+        "Tipos de hipersensibilidade",
+        "Diagnóstico diferencial de febre prolongada",
+        "Definição de biodisponibilidade",
+        "Redistribuição e término do efeito"
+    ]
+    op = StudyOperator(test_study_map)
+    op.step_2_generate_questions()
+
+    # Print sample output cleanly
+    for section, payload in op.questions.items():
+        print(f"\n=== {section} ===")
+        print("Diagnosis:", payload["diagnosis"])
+        print("Questions:")
+        for q in payload["questions"]:
+            print("-", q)
+
+
+    # ┌──────────────────────────────────────────────────────────────┐
+    # │ 3) READING MODE (GUIDED HUNT)                                │
+    # └──────────────────────────────────────────────────────────────┘
+    def step_3_reading_mode(self):
+        print(">>> STEP 3: READING MODE (GUIDED HUNT)")
+        
+        for section, q_set in self.questions.items():
+            print(f"\n--- FOCUS: {section} ---")
+            print(f"Look for keywords related to: {section}")
+            
+            # Iterate through the 3 layers
+            for q_type, question in q_set.items():
+                print(f"\n[?] {q_type} Question: {question}")
+                input("1. Attempt to answer from memory (Press Enter to reveal text check)...")
+                input("2. Check text and correct your thought (Press Enter to confirm)...")
+                
+        print("\n>>> Guided Hunt Complete.")
+
+    # ┌──────────────────────────────────────────────────────────────┐
+    # │ 4) CONSOLIDATION (AFTER READING)                             │
+    # └──────────────────────────────────────────────────────────────┘
+    def step_4_consolidation(self):
+        print(">>> STEP 4: CONSOLIDATION")
+        
+        print("Let's distill the information.")
+        
+        # User inputs the "Irreducibles"
+        print("Enter 1-3 lines of 'Minimum Notes' (the irreducibles):")
+        self.notes["minimum"].append(input("> "))
+        
+        # User inputs If-Then rules
+        print("Enter an 'If-Then' rule (Decision hook/Clinical trigger):")
+        self.notes["if_then"].append(input("> "))
+        
+        # User inputs Confusions
+        print("Enter a common misconception identified + the correction:")
+        self.notes["confusions"].append(input("> "))
+        
+        self.print_box("Consolidation Data", [
+            f"Notes: {self.notes['minimum']}",
+            f"Rules: {self.notes['if_then']}",
+            f"Fixes: {self.notes['confusions']}"
+        ])
+
+    # ┌──────────────────────────────────────────────────────────────┐
+    # │ 5) ACTIVE RECALL SET                                         │
+    # └──────────────────────────────────────────────────────────────┘
+    def step_5_active_recall_set(self):
+        print(">>> STEP 5: CREATING RETRIEVAL PACK")
+        
+        recall_deck = []
+        
+        # Generate prompted Q->A
+        for section in self.study_map:
+            recall_deck.append(f"Q: Define {section} | A: [Your Answer]")
+        
+        # Integrative question
+        recall_deck.append(f"Integrative: How does {self.study_map[0]} affect {self.study_map[-1]}?")
+        
+        # Teach-back
+        recall_deck.append("Teach-Back: Explain this topic to a junior in 60 seconds.")
+        
+        self.print_box("Active Recall Set Created", recall_deck)
+        print("(Optional: Exporting to Anki format...)")
+
+    # ┌──────────────────────────────────────────────────────────────┐
+    # │ 6) SPACING PLAN (LIGHTWEIGHT)                                │
+    # └──────────────────────────────────────────────────────────────┘
+    def step_6_spacing_plan(self):
+        print(">>> STEP 6: SPACING PLAN")
+        
+        today = datetime.now()
+        
+        schedule = [
+            f"First Review: {(today + timedelta(days=1)).strftime('%Y-%m-%d')} (+1 day)",
+            f"Second Review: {(today + timedelta(days=3)).strftime('%Y-%m-%d')} (+3 days)",
+            f"Final Review: {(today + timedelta(days=7)).strftime('%Y-%m-%d')} (+7 days)"
+        ]
+        
+        if "exam" in self.goal.lower():
+            print("(!) Exam detected: Compressing schedule...")
+            # Logic to compress dates could go here
+        
+        self.print_box("Suggested Review Dates", schedule)
+
+    def start(self):
+        """Orchestrates the workflow"""
+        print("\nInitializing Study Assistant Algorithm...\n")
+        self.step_0_input_check()
+        self.step_1_survey()
+        self.step_2_generate_questions()
+        self.step_3_reading_mode()
+        self.step_4_consolidation()
+        self.step_5_active_recall_set()
+        self.step_6_spacing_plan()
+        
+        print("\n>>> END OF WORKFLOW")
+        print("User action required: Practice / Anki / Next Topic")
+
+# ┌──────────────────────────────────────────────────────────────┐
+# │ EXECUTION                                                    │
+# └──────────────────────────────────────────────────────────────┘
+if __name__ == "__main__":
+    session = StudyWorkflow()
+    session.start()
